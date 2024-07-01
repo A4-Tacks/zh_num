@@ -40,7 +40,7 @@ peg::parser!(pub grammar parser() for str {
         }
 });
 
-pub fn to_zh_num(num: u32) -> String {
+pub fn fmt_zh_num(num: u32, mut f: impl fmt::Write) -> fmt::Result {
     fn one(n: u32) -> char {
         match n {
             0 => '零',
@@ -118,13 +118,21 @@ pub fn to_zh_num(num: u32) -> String {
         }
     }
     if num == 0 {
-        return one(0).into();
+        return write!(f, "{}", one(0));
     }
-    FmtNum(num, Cell::new(Some(&mut None))).to_string()
+    write!(f, "{}", FmtNum(num, Cell::new(Some(&mut None))))
+}
+
+pub fn to_zh_num(num: u32) -> String {
+    let mut s = String::new();
+    fmt_zh_num(num, &mut s).unwrap();
+    s
 }
 
 #[cfg(test)]
 mod tests {
+    use std::thread;
+
     use super::*;
 
     #[test]
@@ -216,6 +224,35 @@ mod tests {
         ];
         for (src, num) in datas {
             assert_eq!(to_zh_num(src), num, "{src} -> {num}");
+        }
+    }
+
+    #[test]
+    #[ignore = "long-time-test"]
+    fn test_num_range() {
+        let thread_count = thread::available_parallelism()
+            .unwrap_or(1.try_into().unwrap());
+        let groups = u32::MAX as usize / thread_count;
+        let handles = (0..thread_count.get())
+            .map(|g| {
+                thread::spawn(move || {
+                    let mut s = String::new();
+                    (g*groups..(g+1).saturating_mul(groups))
+                        .step_by(14)
+                        .for_each(|n|
+                    {
+                        let n = n as u32;
+                        s.clear();
+                        fmt_zh_num(n, &mut s).unwrap();
+                        let num
+                            = parser::number(&s);
+                        assert_eq!(num, Ok(n));
+                    });
+                })
+            })
+            .collect::<Vec<_>>();
+        for handle in handles {
+            handle.join().unwrap();
         }
     }
 }

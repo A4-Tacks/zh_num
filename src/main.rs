@@ -1,10 +1,48 @@
 use std::{
+    convert::Infallible,
     env::args,
+    fmt,
     io::{self, stderr, stdin, stdout, Write},
     process::exit,
 };
 
-use zh_num::{parser::number, to_zh_num};
+use zh_num::{fmt_zh_num, parser::number};
+
+struct IOFmtWrapper<W> {
+    write: W,
+    err: Option<io::Result<Infallible>>,
+}
+impl<W: io::Write> IOFmtWrapper<W> {
+    fn new(write: W) -> Self {
+        Self { write, err: None }
+    }
+
+    fn err(self) -> io::Result<()> {
+        match self.err {
+            Some(Ok(_)) => unreachable!(),
+            Some(Err(e)) => Err(e),
+            None => Ok(()),
+        }
+    }
+
+    fn io_write_fmt(&mut self, args: fmt::Arguments<'_>) {
+        if self.err.is_some() { return; }
+        if let Err(e) = io::Write::write_fmt(self.write.by_ref(), args) {
+            self.err.get_or_insert(Err(e));
+        }
+    }
+}
+impl<W: io::Write> fmt::Write for IOFmtWrapper<W> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.io_write_fmt(format_args!("{s}"));
+        Ok(())
+    }
+
+    fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> fmt::Result {
+        self.io_write_fmt(args);
+        Ok(())
+    }
+}
 
 const NAME: &'static str = env!("CARGO_BIN_NAME");
 
@@ -50,7 +88,11 @@ fn main() -> io::Result<()> {
                         writeln!(stderr(), "`{line}` ({part}) {e}")?;
                         io::Result::Ok(0)
                     })?;
-                writeln!(stdout(), "{}", to_zh_num(num))
+
+                let mut stdout = IOFmtWrapper::new(stdout());
+                fmt_zh_num(num, &mut stdout).unwrap();
+                stdout.io_write_fmt(format_args!("\n"));
+                stdout.err()
             })
         },
         _ => {
