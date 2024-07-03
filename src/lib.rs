@@ -27,8 +27,7 @@ peg::parser!(pub grammar parser() for str {
                 .reduce(|a, b| a + b)
                 .ok_or("num-unit")
         }
-    #[no_eof]
-    pub rule number() -> u32
+    rule raw_number() -> u32
         = (s:$(['0'..='9']+) {? s.parse().map_err(|_| "valid-number") })
         / k:k_number() rest:(p:power_num() k:k_number()? { (p, k.unwrap_or_default()) })*
         {
@@ -38,6 +37,9 @@ peg::parser!(pub grammar parser() for str {
                 });
             num + k*high_pow
         }
+    pub rule number() -> (u32, &'input str)
+        = n:raw_number() s:$([_]*)
+        { (n, s) }
 });
 
 pub fn fmt_zh_num(num: u32, mut f: impl fmt::Write) -> fmt::Result {
@@ -182,7 +184,7 @@ mod tests {
             ("零否", 0),
         ];
         for (src, num) in datas {
-            assert_eq!(parser::number(src), Ok(num), "{src} -> {num}");
+            assert_eq!(parser::number(src).map(|x| x.0), Ok(num), "{src} -> {num}");
         }
     }
 
@@ -246,7 +248,7 @@ mod tests {
                         fmt_zh_num(n, &mut s).unwrap();
                         let num
                             = parser::number(&s);
-                        assert_eq!(num, Ok(n));
+                        assert_eq!(num.map(|m| m.0), Ok(n));
                     });
                 })
             })
