@@ -1,64 +1,30 @@
 use std::{
-    convert::Infallible,
     env::args,
-    fmt,
     io::{self, stderr, stdin, stdout, Write},
     process::exit,
 };
 
-use zh_num::{fmt_zh_num, parser::number};
-
-struct IOFmtWrapper<W> {
-    write: W,
-    err: Option<io::Result<Infallible>>,
-}
-impl<W: io::Write> IOFmtWrapper<W> {
-    fn new(write: W) -> Self {
-        Self { write, err: None }
-    }
-
-    fn err(self) -> io::Result<()> {
-        match self.err {
-            Some(Ok(_)) => unreachable!(),
-            Some(Err(e)) => Err(e),
-            None => Ok(()),
-        }
-    }
-
-    fn io_write_fmt(&mut self, args: fmt::Arguments<'_>) {
-        if self.err.is_some() { return; }
-        if let Err(e) = io::Write::write_fmt(self.write.by_ref(), args) {
-            self.err.get_or_insert(Err(e));
-        }
-    }
-
-    fn io_write_str(&mut self, s: &str) {
-        self.io_write_fmt(format_args!("{s}"))
-    }
-}
-impl<W: io::Write> fmt::Write for IOFmtWrapper<W> {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.io_write_fmt(format_args!("{s}"));
-        Ok(())
-    }
-
-    fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> fmt::Result {
-        self.io_write_fmt(args);
-        Ok(())
-    }
-}
+use zh_num::{parser::number, ZhNum, ZhNumUpper};
 
 const NAME: &str = env!("CARGO_BIN_NAME");
 
 fn main() -> io::Result<()> {
     let mut rem = false;
     let mut skip_ch = 0;
+    let mut num_fmt: fn(&mut io::StdoutLock, _) -> io::Result<()>
+        = |f: &mut io::StdoutLock, n| {
+            write!(f, "{}", ZhNum(n))
+        };
     let args = args()
         .skip(1)
         .filter(|arg| (arg == "-r").then(|| rem = true).is_none())
         .filter(|arg| arg.starts_with("-s").then(|| {
             skip_ch = arg[2..].parse().expect("Invalid -s")
         }).is_none())
+        .map(|arg| (arg == "-D").then(|| {
+            num_fmt = |f, n| { write!(f, "{}", ZhNumUpper(n)) };
+            "-d".to_owned()
+        }).unwrap_or(arg))
         .collect::<Vec<_>>();
     macro_rules! skip_ch_line {
         ($line:expr) => {{
@@ -107,10 +73,11 @@ fn main() -> io::Result<()> {
             })
         },
         ["-h" | "--help", ..] | [.., "-h" | "--help"] => {
-            eprintln!("USAGE: {NAME} [-r | -s]... [-d] [-h | --help | -v | --version]");
+            eprintln!("USAGE: {NAME} [-r | -s]... [-d | -D] [-h | --help | -v | --version]");
             eprintln!("将ASCII数字和中文数字相互转换");
             eprintln!("OPTIONS:");
             eprintln!("    -d               反向转换, 也就是将ASCII数字转换成中文数字");
+            eprintln!("    -D               类似 -d, 但是中文数字是大写");
             eprintln!("    -r               转换时保留结果之后的文本");
             eprintln!("    -s<num>          识别时跳过一部分字符, 如果给定了-r则会留在结果中");
             eprintln!("    -v, --version    显示版本信息");
@@ -136,16 +103,16 @@ fn main() -> io::Result<()> {
                         io::Result::Ok(0)
                     })?;
 
-                let mut stdout = IOFmtWrapper::new(stdout().lock());
+                let mut stdout = stdout().lock();
                 if rem {
-                    stdout.io_write_str(prefix);
+                    write!(stdout, "{prefix}")?;
                 }
-                fmt_zh_num(num, &mut stdout).unwrap();
+                num_fmt(&mut stdout, num)?;
                 if rem {
-                    stdout.io_write_str(rem_str);
+                    write!(stdout, "{rem_str}")?;
                 }
-                stdout.io_write_str("\n");
-                stdout.err()
+                write!(stdout, "\n")?;
+                Ok(())
             })
         },
         _ => {
