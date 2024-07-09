@@ -107,13 +107,18 @@ fn main() -> io::Result<()> {
             })
         },
         ["-h" | "--help", ..] | [.., "-h" | "--help"] => {
-            eprintln!("USAGE: {NAME} [-r | -s]... [-d] [-h | --help]");
+            eprintln!("USAGE: {NAME} [-r | -s]... [-d] [-h | --help | -v | --version]");
             eprintln!("将ASCII数字和中文数字相互转换");
             eprintln!("OPTIONS:");
-            eprintln!("    -d           反向转换, 也就是将ASCII数字转换成中文数字");
-            eprintln!("    -r           转换时保留结果之后的文本");
-            eprintln!("    -s<num>      识别时跳过一部分字符, 如果给定了-r则会留在结果中");
-            eprintln!("    -h, --help   显示帮助");
+            eprintln!("    -d               反向转换, 也就是将ASCII数字转换成中文数字");
+            eprintln!("    -r               转换时保留结果之后的文本");
+            eprintln!("    -s<num>          识别时跳过一部分字符, 如果给定了-r则会留在结果中");
+            eprintln!("    -v, --version    显示版本信息");
+            eprintln!("    -h, --help       显示帮助");
+            Ok(())
+        },
+        ["-v" | "--version", ..] | [.., "-v" | "--version"] => {
+            eprintln!("{NAME}@v{}", env!("CARGO_PKG_VERSION"));
             Ok(())
         },
         ["-d"] => {
