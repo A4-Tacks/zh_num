@@ -1,12 +1,23 @@
 use std::{
     env::args,
-    io::{self, stderr, stdin, stdout, Write},
+    io::{self, stderr, stdin, stdout, Write, BufRead},
     process::exit,
 };
 
 use zh_num::{parser::number, ZhNum, ZhNumUpper};
 
 const NAME: &str = env!("CARGO_BIN_NAME");
+
+const CRLF: &str = "\r\n";
+const LF: &str = "\n";
+
+fn get_eol(s: &str) -> &str {
+    s.ends_with(CRLF)
+        .then_some(CRLF)
+        .or_else(|| s.ends_with(LF)
+            .then_some(LF))
+        .unwrap_or_default()
+}
 
 fn main() -> io::Result<()> {
     let mut rem = false;
@@ -37,7 +48,10 @@ fn main() -> io::Result<()> {
             convf(|line: &str| {
                 line.char_indices()
                     .nth(skip_ch)
-                    .map(|(i, _)| line.split_at(i))
+                    .map(|(i, _)| {
+                        let s = line[i..].len() - line[i..].trim_start().len();
+                        line.split_at(i+s)
+                    })
                     .unwrap_or((line, ""))
             })($line)
         }};
@@ -45,32 +59,38 @@ fn main() -> io::Result<()> {
     let args = args.iter().map(|x| &**x).collect::<Vec<_>>();
     match args[..] {
         [] => {
-            stdin().lines().try_for_each(|line| {
-                (|line| {
-                    let (prefix, line) = skip_ch_line!(line);
-                    let (n, s) = number(line)
-                        .map(|(n, s)| (Some(n), s))
-                        .or_else(|e| {
-                            writeln!(stderr(), "`{line}`:{} expected {}",
-                                e.location.column,
-                                e.expected
-                            )?;
-                            io::Result::Ok((None, line))
-                        })?;
-                    let mut stdout = stdout().lock();
-                    if rem {
-                        write!(stdout, "{prefix}")?;
-                    }
-                    if let Some(n) = n {
-                        write!(stdout, "{n}")?;
-                    }
-                    if rem {
-                        write!(stdout, "{s}")?;
-                    }
-                    writeln!(stdout)?;
-                    Ok(())
-                })(line?.trim())
-            })
+            let mut line = String::new();
+            let mut stdin = stdin().lock();
+            let mut lnum = 0u64;
+            loop {
+                line.clear();
+                if 0 == stdin.read_line(&mut line)? { break Ok(()) }
+                lnum += 1;
+
+                let (prefix, line) = skip_ch_line!(&line);
+                let (n, rem_str) = number(line)
+                    .map(|(n, s)| (Some(n), s))
+                    .or_else(|e| {
+                        writeln!(stderr(), "`{}` {lnum}:{} expected {}",
+                            line.trim_end(),
+                            e.location.column+skip_ch,
+                            e.expected,
+                        )?;
+                        io::Result::Ok((None, line))
+                    })?;
+                let mut stdout = stdout().lock();
+                if rem {
+                    write!(stdout, "{prefix}")?;
+                }
+                if let Some(n) = n {
+                    write!(stdout, "{n}")?;
+                }
+                if rem {
+                    write!(stdout, "{rem_str}")?;
+                } else {
+                    write!(stdout, "{}", get_eol(rem_str))?;
+                }
+            }
         },
         ["-h" | "--help", ..] | [.., "-h" | "--help"] => {
             eprintln!("USAGE: {NAME} [-r | -s]... [-d | -D] [-h | --help | -v | --version]");
@@ -89,31 +109,46 @@ fn main() -> io::Result<()> {
             Ok(())
         },
         ["-d"] => {
-            stdin().lines().try_for_each(|line| {
-                let line = line?;
-                let (prefix, line) = skip_ch_line!(line.trim());
+            let mut line = String::new();
+            let mut stdin = stdin().lock();
+            let mut lnum = 0u64;
+            loop {
+                line.clear();
+                if 0 == stdin.read_line(&mut line)? { break Ok(()) }
+                lnum += 1;
+
+                let (prefix, line) = skip_ch_line!(&line);
                 let rem_idx = line
                     .find(|ch| !char::is_ascii_digit(&ch))
                     .unwrap_or(line.len());
                 let (part, rem_str) = line.split_at(rem_idx);
                 let num = part
                     .parse()
+                    .map(Some)
                     .or_else(|e| {
-                        writeln!(stderr(), "`{line}` ({part}) {e}")?;
-                        io::Result::Ok(0)
+                        writeln!(
+                            stderr(),
+                            "`{part}` ({}) {lnum}: {e}",
+                            rem_str.trim_end(),
+                        )?;
+                        io::Result::Ok(None)
                     })?;
 
                 let mut stdout = stdout().lock();
                 if rem {
                     write!(stdout, "{prefix}")?;
                 }
-                num_fmt(&mut stdout, num)?;
+                if let Some(num) = num {
+                    num_fmt(&mut stdout, num)?;
+                } else {
+                    write!(stdout, "{part}")?;
+                }
                 if rem {
                     write!(stdout, "{rem_str}")?;
+                } else {
+                    write!(stdout, "{}", get_eol(rem_str))?;
                 }
-                write!(stdout, "\n")?;
-                Ok(())
-            })
+            }
         },
         _ => {
             eprintln!("Invalid args, run `{NAME} -h` show help");
