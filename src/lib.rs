@@ -45,11 +45,21 @@ peg::parser!(pub grammar parser() for str {
     rule raw_number() -> Number
         = (s:$(['0'..='9']+) {? s.parse().map_err(|_| "valid-number") })
         / yi_number()
+    /// Parse zh nums, return parsed number and rest text
+    ///
+    /// # Examples
+    /// ```
+    /// # use zh_num::parser::number;
+    /// assert_eq!(number("一万零十三章"), Ok((10013, "章")));
+    /// ```
     pub rule number() -> (Number, &'input str)
         = n:raw_number() s:$([_]*)
         { (n, s) }
 });
 
+/// [`to_zh_num`] write to [`Write`] impl
+///
+/// [`Write`]: fmt::Write
 pub fn fmt_zh_num(num: Number, mut f: impl fmt::Write) -> fmt::Result {
     fn one(n: Number) -> char {
         match n {
@@ -133,6 +143,13 @@ pub fn fmt_zh_num(num: Number, mut f: impl fmt::Write) -> fmt::Result {
     write!(f, "{}", FmtNum(num, Cell::new(Some(&mut None))))
 }
 
+/// Convert number to zh words
+///
+/// # Examples
+/// ```
+/// # use zh_num::to_zh_num;
+/// assert_eq!(to_zh_num(10086), "一万零八十六");
+/// ```
 pub fn to_zh_num(num: Number) -> String {
     let mut s = String::new();
     fmt_zh_num(num, &mut s).unwrap();
