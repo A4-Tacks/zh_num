@@ -1,7 +1,9 @@
 use std::{fmt, cell::Cell};
 
+pub type Number = u64;
+
 peg::parser!(pub grammar parser() for str {
-    pub rule one_num(d: u32) -> u32
+    pub rule one_num(d: Number) -> Number
         = "零" n:one_num(d)? { n.unwrap_or(d) }
         / "一" { 1 }
         / "二" { 2 }
@@ -13,10 +15,10 @@ peg::parser!(pub grammar parser() for str {
         / "七" { 7 }
         / "八" { 8 }
         / "九" { 9 }
-    rule power_num() -> u32
+    rule power_num() -> Number
         = "亿" { 100000000 }
         / "万" { 10000 }
-    rule k_number() -> u32
+    rule k_number() -> Number
         = a:(n:one_num(0) "千" { 1000 * n })?
           b:(n:one_num(0) "百" { 100 * n })?
           c:(n:one_num(1)?"十" { 10 * n.unwrap_or(1) })?
@@ -27,23 +29,29 @@ peg::parser!(pub grammar parser() for str {
                 .reduce(|a, b| a + b)
                 .ok_or("num-unit")
         }
-    rule raw_number() -> u32
-        = (s:$(['0'..='9']+) {? s.parse().map_err(|_| "valid-number") })
-        / k:k_number() rest:(p:power_num() k:k_number()? { (p, k.unwrap_or_default()) })*
+    rule wan_number() -> Number
+        = w:k_number() n:("万" n:k_number()? { n.unwrap_or_default() })?
         {
-            let (num, high_pow) = rest.into_iter()
-                .rfold((0, 1), |(rnum, pow), (lpow, num)| {
-                    (num*pow+rnum, lpow)
-                });
-            num + k*high_pow
+            n.map(|n| w * 10000 + n)
+                .unwrap_or(w)
         }
-    pub rule number() -> (u32, &'input str)
+    rule yi_number() -> Number
+        = w:wan_number() rest:("亿" x:wan_number()? { x.unwrap_or_default() })*
+        {
+            rest.into_iter().fold(w, |high, n| {
+                high * 1_0000_0000 + n
+            })
+        }
+    rule raw_number() -> Number
+        = (s:$(['0'..='9']+) {? s.parse().map_err(|_| "valid-number") })
+        / yi_number()
+    pub rule number() -> (Number, &'input str)
         = n:raw_number() s:$([_]*)
         { (n, s) }
 });
 
-pub fn fmt_zh_num(num: u32, mut f: impl fmt::Write) -> fmt::Result {
-    fn one(n: u32) -> char {
+pub fn fmt_zh_num(num: Number, mut f: impl fmt::Write) -> fmt::Result {
+    fn one(n: Number) -> char {
         match n {
             0 => '零',
             1 => '一',
@@ -59,7 +67,7 @@ pub fn fmt_zh_num(num: u32, mut f: impl fmt::Write) -> fmt::Result {
         }
     }
     fn unit(
-        num: u32,
+        num: Number,
         sp: &mut Option<bool>,
         f: &mut fmt::Formatter<'_>,
     ) -> fmt::Result {
@@ -73,7 +81,7 @@ pub fn fmt_zh_num(num: u32, mut f: impl fmt::Write) -> fmt::Result {
         ];
 
         for (pow_d, p) in (0..4).zip(P).rev() {
-            let digit = num / 10u32.pow(pow_d) % 10;
+            let digit = num / Number::pow(10, pow_d) % 10;
             let digit_ch = one(digit);
             if digit == 0 {
                 if let Some(x) = sp { *x = true }
@@ -91,9 +99,9 @@ pub fn fmt_zh_num(num: u32, mut f: impl fmt::Write) -> fmt::Result {
         Ok(())
     }
     fn concat_unit(
-        num: u32,
+        num: Number,
         sp: &mut Option<bool>,
-        pow_i: u32,
+        pow_i: Number,
         pow_ch: char,
         f: &mut fmt::Formatter<'_>,
     ) -> fmt::Result {
@@ -103,7 +111,7 @@ pub fn fmt_zh_num(num: u32, mut f: impl fmt::Write) -> fmt::Result {
         write!(f, "{}", FmtNum(b, Cell::new(sp.into())))?;
         Ok(())
     }
-    struct FmtNum<'a>(u32, Cell<Option<&'a mut Option<bool>>>);
+    struct FmtNum<'a>(Number, Cell<Option<&'a mut Option<bool>>>);
     impl fmt::Display for FmtNum<'_> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             let num = self.0;
@@ -113,7 +121,7 @@ pub fn fmt_zh_num(num: u32, mut f: impl fmt::Write) -> fmt::Result {
                 1_0000..=9999_9999 => {
                     concat_unit(num, sp, 1_0000, '万', f)
                 },
-                1_0000_0000..=u32::MAX => {
+                1_0000_0000..=Number::MAX => {
                     concat_unit(num, sp, 1_0000_0000, '亿', f)
                 },
             }
@@ -125,7 +133,7 @@ pub fn fmt_zh_num(num: u32, mut f: impl fmt::Write) -> fmt::Result {
     write!(f, "{}", FmtNum(num, Cell::new(Some(&mut None))))
 }
 
-pub fn to_zh_num(num: u32) -> String {
+pub fn to_zh_num(num: Number) -> String {
     let mut s = String::new();
     fmt_zh_num(num, &mut s).unwrap();
     s
@@ -164,6 +172,17 @@ mod tests {
             ("一万一", 10001),
             ("一亿一", 100000001),
             ("一亿零一", 100000001),
+            ("十亿零一", 1000000001),
+            ("十四亿零一", 1400000001),
+            ("一十四亿零一", 1400000001),
+            ("二十四亿零一", 2400000001),
+            ("九十四亿零一", 9400000001),
+            ("一百零四亿零一", 10400000001),
+            ("一百四亿零一", 10400000001),
+            ("一千零四亿零一", 100400000001),
+            ("一千亿零一", 100000000001),
+            ("一千亿", 100000000000),
+            ("一万亿零一", 1000000000001),
             ("一万一百", 10100),
             ("一万零一百", 10100),
             ("一万一百一", 10101),
@@ -182,6 +201,19 @@ mod tests {
             ("一万两千", 12000),
             ("一万两千否", 12000),
             ("零否", 0),
+            ("一亿", 1_0000_0000),
+            ("一亿零一", 1_0000_0001),
+            ("一亿零一十", 1_0000_0010),
+            ("一亿零一百", 1_0000_0100),
+            ("一亿零一千", 1_0000_1000),
+            ("一亿零一万", 1_0001_0000),
+            ("一亿零十万", 1_0010_0000),
+            ("一亿零一十万", 1_0010_0000),
+            ("一万亿零一十万", 1_0000_0010_0000),
+            ("一亿亿", 1_0000_0000_0000_0000),
+            ("一亿亿零一", 1_0000_0000_0000_0001),
+            ("一亿三亿零一", 1_0000_0003_0000_0001),
+            ("一亿零三亿零一", 1_0000_0003_0000_0001),
         ];
         for (src, num) in datas {
             assert_eq!(parser::number(src).map(|x| x.0), Ok(num), "{src} -> {num}");
@@ -223,6 +255,34 @@ mod tests {
             (212100, "二十一万二千一百"),
             (212101, "二十一万二千一百零一"),
             (883868, "八十八万三千八百六十八"),
+            (1_0000_0000, "一亿"),
+            (1_0000_0001, "一亿零一"),
+            (1_1000_0000, "一亿一千万"),
+            (1_0100_0000, "一亿零一百万"),
+            (1_0010_0000, "一亿零一十万"),
+            (1_0001_0000, "一亿零一万"),
+            (10_0001_0000, "十亿零一万"),
+            (100_0001_0000, "一百亿零一万"),
+            (1000_0001_0000, "一千亿零一万"),
+            (1_0000_0001_0000, "一万亿零一万"),
+            (10_0000_0001_0000, "十万亿零一万"),
+            (100_0000_0001_0000, "一百万亿零一万"),
+            (1000_0000_0001_0000, "一千万亿零一万"),
+            (1_0000_0000_0001_0000, "一亿亿零一万"),
+            (10_0000_0000_0001_0000, "十亿亿零一万"),
+            (14_0000_0000_0001_0000, "十四亿亿零一万"),
+            (10_1000_0000_0001_0000, "十亿零一千万亿零一万"),
+            (100_0000_0000_0001_0000, "一百亿亿零一万"),
+            (200_0000_0000_0001_0000, "二百亿亿零一万"),
+            (1000_0000_0000_0001_0000, "一千亿亿零一万"),
+            (1300_0000_0000_0001_0000, "一千三百亿亿零一万"),
+            (1030_0000_0000_0001_0000, "一千零三十亿亿零一万"),
+            (1003_0000_0000_0001_0000, "一千零三亿亿零一万"),
+            (1003_3000_0000_0001_0000, "一千零三亿三千万亿零一万"),
+            (1003_0300_0000_0001_0000, "一千零三亿零三百万亿零一万"),
+            (1_0000_0000_0000, "一万亿"),
+            (1_0001_0000_0000, "一万零一亿"),
+            (1_0000_0000_0000_0000, "一亿亿"),
         ];
         for (src, num) in datas {
             assert_eq!(to_zh_num(src), num, "{src} -> {num}");
@@ -234,16 +294,16 @@ mod tests {
     fn test_num_range() {
         let thread_count = thread::available_parallelism()
             .unwrap_or(1.try_into().unwrap());
-        let groups = u32::MAX as usize / thread_count;
+        let groups = Number::MAX as usize / thread_count;
         let handles = (0..thread_count.get())
             .map(|g| {
                 thread::spawn(move || {
                     let mut s = String::new();
                     (g*groups..(g+1).saturating_mul(groups))
-                        .step_by(14)
+                        .step_by(141)
                         .for_each(|n|
                     {
-                        let n = n as u32;
+                        let n = n as Number;
                         s.clear();
                         fmt_zh_num(n, &mut s).unwrap();
                         let num
