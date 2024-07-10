@@ -1,12 +1,7 @@
-use std::{
-    env::args,
-    io::{self, stderr, stdin, stdout, Write, BufRead},
-    process::exit,
-};
+use std::io::{self, stderr, stdin, stdout, Write, BufRead};
+use clap::{Parser, Arg, ArgAction};
 
-use zh_num::{parser::number, ZhNum, ZhNumUpper};
-
-const NAME: &str = env!("CARGO_BIN_NAME");
+use zh_num::{parser::number, ZhNum, ZhNumUpper, Number};
 
 const CRLF: &str = "\r\n";
 const LF: &str = "\n";
@@ -19,24 +14,55 @@ fn get_eol(s: &str) -> &str {
         .unwrap_or_default()
 }
 
+#[derive(Debug, Default, Parser)]
+#[command(help_template = "\
+{usage-heading} {usage}
+{about}
+
+{before-help}{all-args}{after-help}
+
+{name}@{version}
+{author}
+")]
+#[command(
+    about = "将ASCII数字和中文数字相互转换",
+    version,
+    author,
+    disable_version_flag = true,
+    arg = Arg::new("version-lower")
+        .short('v')
+        .long("version")
+        .help("Print version")
+        .action(ArgAction::Version),
+)]
+struct Config {
+    #[arg(short, help = "反向转换, 也就是将ASCII数字转换成中文数字")]
+    dump: bool,
+    #[arg(short = 'D', help = "类似 -d, 但是中文数字是大写")]
+    is_upper: bool,
+    #[arg(short, help = "转换时保留结果之外的文本")]
+    rem: bool,
+    #[arg(short, help = "识别时跳过一部分字符, 如果给定了-r则会留在结果中")]
+    #[arg(default_value_t = 0)]
+    skip_ch: usize,
+}
+impl Config {
+    fn num_fmt(&self) -> fn(&mut io::StdoutLock, Number) -> io::Result<()> {
+        if !self.is_upper {
+            |f, n| write!(f, "{}", ZhNum(n))
+        } else {
+            |f, n| write!(f, "{}", ZhNumUpper(n))
+        }
+    }
+    fn init_dependenices(mut self) -> Self {
+        self.dump |= self.is_upper;
+        self
+    }
+}
+
 fn main() -> io::Result<()> {
-    let mut rem = false;
-    let mut skip_ch = 0;
-    let mut num_fmt: fn(&mut io::StdoutLock, _) -> io::Result<()>
-        = |f: &mut io::StdoutLock, n| {
-            write!(f, "{}", ZhNum(n))
-        };
-    let args = args()
-        .skip(1)
-        .filter(|arg| (arg == "-r").then(|| rem = true).is_none())
-        .filter(|arg| arg.starts_with("-s").then(|| {
-            skip_ch = arg[2..].parse().expect("Invalid -s")
-        }).is_none())
-        .map(|arg| (arg == "-D").then(|| {
-            num_fmt = |f, n| { write!(f, "{}", ZhNumUpper(n)) };
-            "-d".to_owned()
-        }).unwrap_or(arg))
-        .collect::<Vec<_>>();
+    let cfg = Config::parse().init_dependenices();
+    let Config { rem, skip_ch, dump, .. } = cfg;
     macro_rules! skip_ch_line {
         ($line:expr) => {{
             fn convf<'a, T, F>(f: F) -> F
@@ -56,9 +82,8 @@ fn main() -> io::Result<()> {
             })($line)
         }};
     }
-    let args = args.iter().map(|x| &**x).collect::<Vec<_>>();
-    match args[..] {
-        [] => {
+    match dump {
+        false => {
             let mut line = String::new();
             let mut stdin = stdin().lock();
             let mut lnum = 0u64;
@@ -92,23 +117,7 @@ fn main() -> io::Result<()> {
                 }
             }
         },
-        ["-h" | "--help", ..] | [.., "-h" | "--help"] => {
-            eprintln!("USAGE: {NAME} [-r | -s]... [-d | -D] [-h | --help | -v | --version]");
-            eprintln!("将ASCII数字和中文数字相互转换");
-            eprintln!("OPTIONS:");
-            eprintln!("    -d               反向转换, 也就是将ASCII数字转换成中文数字");
-            eprintln!("    -D               类似 -d, 但是中文数字是大写");
-            eprintln!("    -r               转换时保留结果之后的文本");
-            eprintln!("    -s<num>          识别时跳过一部分字符, 如果给定了-r则会留在结果中");
-            eprintln!("    -v, --version    显示版本信息");
-            eprintln!("    -h, --help       显示帮助");
-            Ok(())
-        },
-        ["-v" | "--version", ..] | [.., "-v" | "--version"] => {
-            eprintln!("{NAME}@v{}", env!("CARGO_PKG_VERSION"));
-            Ok(())
-        },
-        ["-d"] => {
+        true => {
             let mut line = String::new();
             let mut stdin = stdin().lock();
             let mut lnum = 0u64;
@@ -139,7 +148,7 @@ fn main() -> io::Result<()> {
                     write!(stdout, "{prefix}")?;
                 }
                 if let Some(num) = num {
-                    num_fmt(&mut stdout, num)?;
+                    cfg.num_fmt()(&mut stdout, num)?;
                 } else {
                     write!(stdout, "{part}")?;
                 }
@@ -149,10 +158,6 @@ fn main() -> io::Result<()> {
                     write!(stdout, "{}", get_eol(rem_str))?;
                 }
             }
-        },
-        _ => {
-            eprintln!("Invalid args, run `{NAME} -h` show help");
-            exit(2)
         },
     }
 }
