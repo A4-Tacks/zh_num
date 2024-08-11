@@ -47,6 +47,7 @@ peg::parser!(pub grammar parser() for str {
     rule raw_number() -> Number
         = (s:$(['0'..='9']+) {? s.parse().map_err(|_| "valid-number") })
         / yi_number()
+
     /// Parse zh nums, return parsed number and rest text
     ///
     /// # Examples
@@ -57,6 +58,28 @@ peg::parser!(pub grammar parser() for str {
     pub rule number() -> (Number, &'input str)
         = n:raw_number() s:$([_]*)
         { (n, s) }
+
+    /// Parse hard zh nums, return parsed number and rest text
+    ///
+    /// # Examples
+    /// ```
+    /// # use zh_num::parser::hard_number;
+    /// assert_eq!(hard_number("一零零八六章"), Ok((10086, "章")));
+    /// assert_eq!(hard_number("一零零十三章"), Ok((10013, "章")));
+    /// assert_eq!(hard_number("零零零章"), Ok((0, "章")));
+    /// assert_eq!(hard_number("百零零章"), Ok((100, "章")));
+    /// ```
+    pub rule hard_number() -> (Number, &'input str)
+        = nums:(
+            "零" { 0 }
+            / ['十' | '百' | '千' | '万' | '亿'] { 1 }
+            / one_num(0))+
+        s:$([_]*)
+        {
+            let num = nums.into_iter()
+                .fold(0, |acc, num| acc * 10 + num);
+            (num, s)
+        }
 });
 
 struct FmtNum<'a, C>(Number, Cell<Option<&'a mut Option<bool>>>, C);
@@ -69,10 +92,10 @@ where C: NumCfg,
         match num {
             0..=9999 => C::unit(num, sp, f),
             1_0000..=9999_9999 => {
-                C::concat_unit(num, sp, 1_0000, '万', f)
+                C::concat_unit(num, sp, 1_0000, C::N1_0000, f)
             },
             1_0000_0000..=Number::MAX => {
-                C::concat_unit(num, sp, 1_0000_0000, '亿', f)
+                C::concat_unit(num, sp, 1_0000_0000, C::N1_0000_0000, f)
             },
         }
     }

@@ -1,7 +1,10 @@
 use std::io::{self, stderr, stdin, stdout, Write, BufRead};
 use clap::{Parser, Arg, ArgAction};
 
-use zh_num::{parser::number, ZhNum, ZhNumUpper, Number};
+use zh_num::{
+    parser::{hard_number, number},
+    Number, ZhNum, ZhNumUpper,
+};
 
 const CRLF: &str = "\r\n";
 const LF: &str = "\n";
@@ -42,6 +45,8 @@ struct Config {
     is_upper: bool,
     #[arg(short, help = "转换时保留结果之外的文本")]
     rem: bool,
+    #[arg(short = 'a', help = "转换硬数字, 如 `千零二三` `一零零十三`")]
+    hard: bool,
     #[arg(short, help = "识别时跳过一部分字符, 如果给定了-r则会留在结果中")]
     #[arg(default_value_t = 0)]
     skip_ch: usize,
@@ -55,6 +60,7 @@ impl Config {
         }
     }
     fn init_dependenices(mut self) -> Self {
+        if self.dump && self.hard { eprintln!("警告: 在指定 -d 时 -a 被忽略"); }
         self.dump |= self.is_upper;
         self
     }
@@ -62,7 +68,7 @@ impl Config {
 
 fn main() -> io::Result<()> {
     let cfg = Config::parse().init_dependenices();
-    let Config { rem, skip_ch, dump, .. } = cfg;
+    let Config { rem, skip_ch, dump, hard, .. } = cfg;
     macro_rules! skip_ch_line {
         ($line:expr) => {{
             fn convf<'a, T, F>(f: F) -> F
@@ -93,7 +99,12 @@ fn main() -> io::Result<()> {
                 lnum += 1;
 
                 let (prefix, line) = skip_ch_line!(&line);
-                let (n, rem_str) = number(line)
+                let result = if !hard {
+                    number(line)
+                } else {
+                    hard_number(line)
+                };
+                let (n, rem_str) = result
                     .map(|(n, s)| (Some(n), s))
                     .or_else(|e| {
                         writeln!(stderr(), "`{}` {lnum}:{} expected {}",
