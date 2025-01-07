@@ -61,6 +61,7 @@ impl Config {
     }
     fn init_dependenices(mut self) -> Self {
         if self.dump && self.hard { eprintln!("警告: 在指定 -d 时 -a 被忽略"); }
+        if self.is_upper && self.hard { eprintln!("警告: 在指定 -D 时 -a 被忽略"); }
         self.dump |= self.is_upper;
         self
     }
