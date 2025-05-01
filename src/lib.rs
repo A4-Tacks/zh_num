@@ -24,8 +24,8 @@ peg::parser!(pub grammar parser() for str {
         = quiet!{one_num_inner(d)}
         / expected!("num-unit")
     rule power_num() -> Number
-        = "亿" { 100000000 }
-        / "万" { 10000 }
+        = "亿" { 1_0000_0000 }
+        / "万" { 1_0000 }
     rule k_number() -> Number
         = a:(n:one_num(0)  c30()    { 1000 * n })?
           b:(n:one_num(0)  c20()    { 100 * n })?
@@ -40,8 +40,7 @@ peg::parser!(pub grammar parser() for str {
     rule wan_number() -> Number
         = w:k_number() n:("万" n:k_number()? { n.unwrap_or_default() })?
         {
-            n.map(|n| w * 10000 + n)
-                .unwrap_or(w)
+            n.map_or(w, |n| w * 10000 + n)
         }
     rule yi_number() -> Number
         = w:wan_number() rest:("亿" x:wan_number()? { x.unwrap_or_default() })*
@@ -123,7 +122,7 @@ trait NumCfg: Default + Sized {
 
     fn one(n: Number) -> char {
         match n {
-            0..=9 => Self::DIGITS[n as usize],
+            0..=9 => Self::DIGITS[usize::try_from(n).unwrap()],
             _ => panic!("{n}"),
         }
     }
@@ -149,7 +148,7 @@ trait NumCfg: Default + Sized {
             if let Some(p) = p {
                 write!(f, "{p}")?;
             }
-            *sp = Some(false)
+            *sp = Some(false);
         }
         Ok(())
     }
@@ -239,6 +238,7 @@ pub fn fmt_zh_num_upper(num: Number, f: impl fmt::Write) -> fmt::Result {
 /// # use zh_num::to_zh_num;
 /// assert_eq!(to_zh_num(10086), "一万零八十六");
 /// ```
+#[must_use]
 pub fn to_zh_num(num: Number) -> String {
     ZhNum(num).to_string()
 }
@@ -250,6 +250,7 @@ pub fn to_zh_num(num: Number) -> String {
 /// # use zh_num::to_zh_num_upper;
 /// assert_eq!(to_zh_num_upper(10086), "壹万零捌拾陆");
 /// ```
+#[must_use]
 pub fn to_zh_num_upper(num: Number) -> String {
     ZhNumUpper(num).to_string()
 }
