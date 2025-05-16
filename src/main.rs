@@ -1,5 +1,10 @@
-use std::{io::{self, stderr, stdin, stdout, BufRead, StdinLock, StdoutLock, Write}, process::exit};
-use clap::{Parser, Arg, ArgAction};
+use clap::{Arg, ArgAction, Parser};
+use std::{
+    io::{
+        self, stderr, stdin, stdout, BufRead, StdinLock, StdoutLock, Write,
+    },
+    process::exit,
+};
 
 use zh_num::{
     parser::{hard_number, number},
@@ -17,6 +22,8 @@ fn get_eol(s: &str) -> &str {
         .unwrap_or_default()
 }
 
+const BOMB: char = '\u{feff}';
+
 #[derive(Debug, Default, Parser)]
 #[command(help_template = "\
 {usage-heading} {usage}
@@ -28,7 +35,7 @@ fn get_eol(s: &str) -> &str {
 {author}
 ")]
 #[command(
-    about = "将ASCII数字和中文数字相互转换",
+    about = "将ASCII数字和中文数字相互转换, 从标准输入",
     version,
     author,
     disable_version_flag = true,
@@ -50,6 +57,10 @@ struct Config {
     #[arg(short, help = "识别时跳过一部分字符, 如果给定了-r则会留在结果中")]
     #[arg(default_value_t = 0)]
     skip_ch: usize,
+    #[arg(short = 'q', help = "不对解析失败进行报错")]
+    quiet: bool,
+    #[arg(short = 'B', help = "移除 UTF-8 BOM 标记")]
+    remove_bomb: bool,
 }
 impl Config {
     fn num_fmt(&self) -> fn(&mut io::StdoutLock, Number) -> io::Result<()> {
@@ -100,19 +111,24 @@ impl Processor {
             })
     }
 
-    fn fetch_line(&mut self) -> io::Result<usize> {
+    fn fetch_line(&mut self) -> io::Result<bool> {
         if !self.noeol {
             self.lnum += 1;
         }
         self.line.clear();
 
-        let bytec = self.stdin.read_line(&mut self.line)?;
+        self.stdin.read_line(&mut self.line)?;
         self.noeol = get_eol(&self.line).is_empty();
-        Ok(bytec)
+
+        if self.cfg.remove_bomb && self.lnum <= 1 && self.line.starts_with(BOMB) {
+            self.line.remove(0);
+        }
+
+        Ok(!self.line.is_empty())
     }
 
     fn run_dump_lines(&mut self) -> io::Result<()> {
-        while self.fetch_line()? != 0 {
+        while self.fetch_line()? {
             let (prefix, line) = self.skip_ch_line(&self.line);
             let rem_idx = line
                 .find(|ch| !char::is_ascii_digit(&ch))
@@ -122,12 +138,14 @@ impl Processor {
                 .parse()
                 .map(Some)
                 .or_else(|e| {
-                    writeln!(
-                        stderr(),
-                        "`{part}` ({}) {}: {e}",
-                        rem_str.trim_end(),
-                        self.lnum,
-                    )?;
+                    if !self.cfg.quiet {
+                        writeln!(
+                            stderr(),
+                            "`{part}` ({}) {}: {e}",
+                            rem_str.trim_end(),
+                            self.lnum,
+                        )?;
+                    }
                     io::Result::Ok(None)
                 })?;
 
@@ -149,7 +167,7 @@ impl Processor {
     }
 
     fn run_make_lines(&mut self) -> io::Result<()> {
-        while self.fetch_line()? != 0 {
+        while self.fetch_line()? {
             let (prefix, line) = self.skip_ch_line(&self.line);
             let result = if !self.cfg.hard {
                 number(line)
@@ -159,12 +177,14 @@ impl Processor {
             let (n, rem_str) = result
                 .map(|(n, s)| (Some(n), s))
                 .or_else(|e| {
-                    writeln!(stderr(), "`{}` {}:{} expected {}",
-                        line.trim_end(),
-                        self.lnum,
-                        e.location.column+self.cfg.skip_ch,
-                        e.expected,
-                    )?;
+                    if !self.cfg.quiet {
+                        writeln!(stderr(), "`{}` {}:{} expected {}",
+                            line.trim_end(),
+                            self.lnum,
+                            e.location.column+self.cfg.skip_ch,
+                            e.expected,
+                        )?;
+                    }
                     io::Result::Ok((None, line))
                 })?;
             if self.cfg.rem {
