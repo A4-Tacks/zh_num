@@ -5,10 +5,11 @@ use std::{
 
 pub type Number = u64;
 
+#[cfg(feature = "parser")]
 peg::parser!(pub grammar parser() for str {
-    rule c10() = ['十' | '拾' | '⑩' | '⑽' | '㈩']
-    rule c20() = ['百' | '佰' | '陌']
-    rule c30() = ['千' | '仟' | '阡']
+    rule c10() = quiet!{['十' | '拾' | '⑩' | '⑽' | '㈩']} / expected!("十")
+    rule c20() = quiet!{['百' | '佰' | '陌']} / expected!("百")
+    rule c30() = quiet!{['千' | '仟' | '阡']} / expected!("千")
     rule one_num_inner(d: Number) -> Number
         = ['零' | '０' | '〇'] n:one_num(d)?   { n.unwrap_or(d) }
         / ['一' | '１' | '⑴' | '㈠' | '①' | '壹' | '弌' | '幺'] { 1 }
@@ -49,11 +50,20 @@ peg::parser!(pub grammar parser() for str {
                 high * 1_0000_0000 + n
             })
         }
-    rule raw_number() -> Number
-        = (s:$(['0'..='9']+) {? s.parse().map_err(|_| "valid-number") })
+    rule ascii_digits() = quiet!{['0'..='9']+} / expected!("ascii-digit")
+
+    /// Parse zh nums and ascii-digits, return parsed number
+    ///
+    /// # Examples
+    /// ```
+    /// # use zh_num::parser::raw_number;
+    /// assert_eq!(raw_number("一万零十三"), Ok(10013));
+    /// ```
+    pub rule raw_number() -> Number
+        = (s:$(ascii_digits()) {? s.parse().map_err(|_| "valid-number") })
         / yi_number()
 
-    /// Parse zh nums, return parsed number and rest text
+    /// Parse zh nums and ascii-digits, return parsed number and rest text
     ///
     /// # Examples
     /// ```
@@ -63,6 +73,25 @@ peg::parser!(pub grammar parser() for str {
     pub rule number() -> (Number, &'input str)
         = n:raw_number() s:$([_]*)
         { (n, s) }
+
+    /// Parse hard zh nums, return parsed number
+    ///
+    /// # Examples
+    /// ```
+    /// # use zh_num::parser::raw_hard_number;
+    /// assert_eq!(raw_hard_number("一零零八六"), Ok(10086));
+    /// assert_eq!(raw_hard_number("一零零十三"), Ok(10013));
+    /// assert_eq!(raw_hard_number("零零零"), Ok(0));
+    /// assert_eq!(raw_hard_number("百零零"), Ok(100));
+    /// ```
+    pub rule raw_hard_number() -> Number
+        = nums:(
+            "零" { 0 }
+            / (c10() / c20() / c30() / ['万' | '亿']) { 1 }
+            / one_num(0))+
+        {
+            nums.into_iter().fold(0, |acc, num| acc * 10 + num)
+        }
 
     /// Parse hard zh nums, return parsed number and rest text
     ///
@@ -75,16 +104,7 @@ peg::parser!(pub grammar parser() for str {
     /// assert_eq!(hard_number("百零零章"), Ok((100, "章")));
     /// ```
     pub rule hard_number() -> (Number, &'input str)
-        = nums:(
-            "零" { 0 }
-            / (c10() / c20() / c30() / ['万' | '亿']) { 1 }
-            / one_num(0))+
-        s:$([_]*)
-        {
-            let num = nums.into_iter()
-                .fold(0, |acc, num| acc * 10 + num);
-            (num, s)
-        }
+        = num:raw_hard_number() s:$([_]*) { (num, s) }
 });
 
 struct FmtNum<'a, C>(Number, Cell<Option<&'a mut Option<bool>>>, C);
@@ -287,10 +307,9 @@ impl Display for ZhNumUpper {
 
 #[cfg(test)]
 mod tests {
-    use std::thread;
-
     use super::*;
 
+    #[cfg(feature = "parser")]
     #[test]
     fn test_parse() {
         let datas = [
@@ -439,6 +458,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "parser")]
     #[test]
     fn test_upper_number_parse() {
         (0..150)
@@ -452,9 +472,12 @@ mod tests {
             });
     }
 
+    #[cfg(feature = "parser")]
     #[test]
     #[ignore = "long-time-test"]
     fn test_num_range() {
+        use std::thread;
+
         let thread_count = thread::available_parallelism()
             .unwrap_or(1.try_into().unwrap());
         let groups = Number::MAX as usize / thread_count;
@@ -462,16 +485,28 @@ mod tests {
             .map(|g| {
                 thread::spawn(move || {
                     let mut s = String::new();
-                    (g*groups..(g+1).saturating_mul(groups))
-                        .step_by(141)
+                    let from = g*groups;
+                    let to = (g+1).saturating_mul(groups);
+                    let step = to.isqrt();
+
+                    println!("Start {from}..{to}..{step}");
+                    (from..to)
+                        .step_by(step)
                         .for_each(|n|
                     {
                         let n = n as Number;
+
                         s.clear();
                         fmt_zh_num(n, &mut s).unwrap();
                         let num
-                            = parser::number(&s);
-                        assert_eq!(num.map(|m| m.0), Ok(n));
+                            = parser::raw_number(&s);
+                        assert_eq!(num, Ok(n));
+
+                        s.clear();
+                        fmt_zh_num_upper(n, &mut s).unwrap();
+                        let num
+                            = parser::raw_number(&s);
+                        assert_eq!(num, Ok(n));
                     });
                 })
             })
