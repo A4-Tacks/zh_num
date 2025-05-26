@@ -1,12 +1,25 @@
-use std::{
+#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
+extern crate alloc;
+
+use core::{
     cell::Cell,
     fmt::{self, Display},
 };
+#[cfg(not(feature = "std"))]
+use alloc::string::{String, ToString};
+
+#[cfg(all(not(feature = "std"), feature = "parser"))]
+use alloc::vec;
 
 pub type Number = u64;
 
 #[cfg(feature = "parser")]
+#[cfg_attr(docsrs, doc(cfg(feature = "parser")))]
 peg::parser!(pub grammar parser() for str {
+    use vec;
+
     rule c10() = quiet!{['十' | '拾' | '⑩' | '⑽' | '㈩']} / expected!("十")
     rule c20() = quiet!{['百' | '佰' | '陌']} / expected!("百")
     rule c30() = quiet!{['千' | '仟' | '阡']} / expected!("千")
@@ -161,7 +174,7 @@ trait NumCfg: Default + Sized {
                 if let Some(x) = sp { *x = true }
                 continue;
             }
-            if let Some(true) = sp { write!(f, "{}", Self::DIGITS[0])? }
+            if *sp == Some(true) { write!(f, "{}", Self::DIGITS[0])? }
             if !(sp.is_none() && digit == 1 && p == Some('十')) {
                 write!(f, "{digit_ch}")?;
             }
@@ -472,7 +485,7 @@ mod tests {
             });
     }
 
-    #[cfg(feature = "parser")]
+    #[cfg(all(feature = "parser", feature = "std"))]
     #[test]
     #[ignore = "long-time-test"]
     fn test_num_range() {
