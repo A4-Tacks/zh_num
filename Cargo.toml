@@ -33,4 +33,4 @@ strip = true
 
 [dependencies]
 peg = { version = "0.8.3", optional = true }
-getopts-macro = { version = "0.1.10", optional = true }
+getopts-macro = { version = "0.1.13", optional = true, default-features = false }
