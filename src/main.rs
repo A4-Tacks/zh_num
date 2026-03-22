@@ -1,4 +1,3 @@
-use clap::{Arg, ArgAction, Parser};
 use std::{
     io::{
         self, stderr, stdin, stdout, BufRead, StdinLock, StdoutLock, Write,
@@ -24,45 +23,86 @@ fn get_eol(s: &str) -> &str {
 
 const BOMB: char = '\u{feff}';
 
-#[derive(Debug, Default, Parser)]
-#[command(help_template = "\
-{usage-heading} {usage}
-{about}
+enum Error {
+    String(String),
+    ParseError(std::num::ParseIntError),
+}
 
-{before-help}{all-args}{after-help}
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::String(s) => write!(f, "{s}"),
+            Error::ParseError(e) => write!(f, "{e}"),
+        }
+    }
+}
 
-{name}@{version}
-{author}
-")]
-#[command(
-    about = "将ASCII数字和中文数字相互转换, 从标准输入",
-    version,
-    author,
-    disable_version_flag = true,
-    arg = Arg::new("version-lower")
-        .short('v')
-        .long("version")
-        .help("Print version")
-        .action(ArgAction::Version),
-)]
+impl From<String> for Error {
+    fn from(v: String) -> Self {
+        Self::String(v)
+    }
+}
+
+impl From<std::num::ParseIntError> for Error {
+    fn from(v: std::num::ParseIntError) -> Self {
+        Self::ParseError(v)
+    }
+}
+
+#[derive(Debug, Default)]
 struct Config {
-    #[arg(short, help = "反向转换, 也就是将ASCII数字转换成中文数字")]
     dump: bool,
-    #[arg(short = 'D', help = "类似 -d, 但是中文数字是大写")]
     is_upper: bool,
-    #[arg(short, help = "转换时保留结果之外的文本")]
     rem: bool,
-    #[arg(short = 'a', help = "转换硬数字, 如 `千零二三` `一零零十三`")]
     hard: bool,
-    #[arg(short, help = "识别时跳过一部分字符, 如果给定了-r则会留在结果中")]
-    #[arg(default_value_t = 0)]
     skip_ch: usize,
-    #[arg(short = 'q', help = "不对解析失败进行报错")]
     quiet: bool,
-    #[arg(short = 'B', help = "移除 UTF-8 BOM 标记")]
     remove_bomb: bool,
 }
 impl Config {
+    fn options() -> getopts_macro::getopts::Options {
+        getopts_macro::getopts_options! {
+            -d, --dump              "反向转换, 也就是将ASCII数字转换成中文数字";
+            -D, --is-upper          "类似 -d, 但是中文数字是大写";
+            -r, --rem               "转换时保留结果之外的文本";
+            -a, --hard              "转换硬数字, 如 `千零二三` `一零零十三`";
+            -s, --skip-ch=COUNT     "识别时跳过一部分字符, 如果给定了-r则会留在结果中";
+            -q, --quiet             "不对解析失败进行报错";
+            -B, --remove-bomb       "移除 UTF-8 BOM 标记";
+            -v, --version           "Print version";
+            -h, --help              "Print help";
+        }
+    }
+
+    fn parse() -> Result<Self, Error> {
+        let desc = "将ASCII数字和中文数字相互转换, 从标准输入";
+        let matches = getopts_macro::simple_parse(&Self::options(), desc, 0, "");
+
+        if let Some(first) = matches.free.first() {
+            return Err(format!("unexpected argument {first:?} found").into());
+        }
+
+        if matches.opt_present("version") {
+            let name = env!("CARGO_BIN_NAME");
+            let version = env!("CARGO_PKG_VERSION");
+            println!("{name} {version}");
+            exit(0)
+        }
+
+        let skip_ch = matches.opt_get_default("skip-ch", 0).map_err(|e| {
+            format!("invalid value for option '-s': {e}")
+        })?;
+        Ok(Self {
+            dump: matches.opt_present("dump"),
+            is_upper: matches.opt_present("is-upper"),
+            rem: matches.opt_present("rem"),
+            hard: matches.opt_present("hard"),
+            skip_ch,
+            quiet: matches.opt_present("quiet"),
+            remove_bomb: matches.opt_present("remove-bomb"),
+        })
+    }
+
     fn num_fmt(&self) -> fn(&mut io::StdoutLock, Number) -> io::Result<()> {
         if !self.is_upper {
             |f, n| write!(f, "{}", ZhNum(n))
@@ -212,7 +252,12 @@ impl Processor {
 }
 
 fn main() {
-    let cfg = Config::parse().init_dependenices();
+    let cfg = Config::parse()
+        .unwrap_or_else(|e| {
+            eprintln!("error: {e}");
+            exit(2)
+        })
+        .init_dependenices();
     let mut processor = Processor {
         cfg,
         ..Default::default()
